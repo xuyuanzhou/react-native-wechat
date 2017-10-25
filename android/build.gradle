@@ -23,5 +23,6 @@ allprojects {
 
 dependencies {
   compile 'com.facebook.react:react-native:+'
-  compile files('libs/libammsdk.jar')
+  //compile files('libs/libammsdk.jar')
+   compile 'com.tencent.mm.opensdk:wechat-sdk-android-without-mta:+'
 }
