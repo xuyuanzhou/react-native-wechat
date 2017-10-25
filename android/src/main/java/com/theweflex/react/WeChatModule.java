@@ -2,9 +2,13 @@ package com.theweflex.react;
 
 import android.content.Context;
 import android.content.Intent;
+import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
+import android.provider.MediaStore;
 import android.support.annotation.Nullable;
+import android.util.Log;
 
 import com.facebook.common.executors.UiThreadImmediateExecutorService;
 import com.facebook.common.internal.Files;
@@ -26,27 +30,28 @@ import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.modules.core.DeviceEventManagerModule;
-import com.tencent.mm.sdk.modelbase.BaseReq;
-import com.tencent.mm.sdk.modelbase.BaseResp;
-import com.tencent.mm.sdk.modelmsg.SendAuth;
-import com.tencent.mm.sdk.modelmsg.SendMessageToWX;
-import com.tencent.mm.sdk.modelmsg.WXFileObject;
-import com.tencent.mm.sdk.modelmsg.WXImageObject;
-import com.tencent.mm.sdk.modelmsg.WXMediaMessage;
-import com.tencent.mm.sdk.modelmsg.WXMusicObject;
-import com.tencent.mm.sdk.modelmsg.WXTextObject;
-import com.tencent.mm.sdk.modelmsg.WXVideoObject;
-import com.tencent.mm.sdk.modelmsg.WXWebpageObject;
-import com.tencent.mm.sdk.modelpay.PayReq;
-import com.tencent.mm.sdk.modelpay.PayResp;
-import com.tencent.mm.sdk.openapi.IWXAPI;
-import com.tencent.mm.sdk.openapi.IWXAPIEventHandler;
-import com.tencent.mm.sdk.openapi.WXAPIFactory;
+import com.tencent.mm.opensdk.modelbase.BaseReq;
+import com.tencent.mm.opensdk.modelbase.BaseResp;
+import com.tencent.mm.opensdk.modelmsg.SendAuth;
+import com.tencent.mm.opensdk.modelmsg.SendMessageToWX;
+import com.tencent.mm.opensdk.modelmsg.WXFileObject;
+import com.tencent.mm.opensdk.modelmsg.WXImageObject;
+import com.tencent.mm.opensdk.modelmsg.WXMediaMessage;
+import com.tencent.mm.opensdk.modelmsg.WXMusicObject;
+import com.tencent.mm.opensdk.modelmsg.WXTextObject;
+import com.tencent.mm.opensdk.modelmsg.WXVideoObject;
+import com.tencent.mm.opensdk.modelmsg.WXWebpageObject;
+import com.tencent.mm.opensdk.modelpay.PayReq;
+import com.tencent.mm.opensdk.modelpay.PayResp;
+import com.tencent.mm.opensdk.openapi.IWXAPI;
+import com.tencent.mm.opensdk.openapi.IWXAPIEventHandler;
+import com.tencent.mm.opensdk.openapi.WXAPIFactory;
 
 import java.io.File;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.UUID;
+
 
 /**
  * Created by tdzl2_000 on 2015-10-10.
@@ -172,7 +177,7 @@ public class WeChatModule extends ReactContextBaseJavaModule implements IWXAPIEv
         }
         _share(SendMessageToWX.Req.WXSceneSession, data, callback);
     }
-    
+
     @ReactMethod
     public void shareToFavorite(ReadableMap data, Callback callback) {
         if (api == null) {
@@ -210,11 +215,28 @@ public class WeChatModule extends ReactContextBaseJavaModule implements IWXAPIEv
         callback.invoke(api.sendReq(payReq) ? null : INVOKE_FAILED);
     }
 
+    public  String getRealPathFromUri(Context context, Uri contentUri) {
+        Cursor cursor = null;
+        try {
+            String[] proj = { MediaStore.Images.Media.DATA };
+            cursor = context.getContentResolver().query(contentUri, proj, null, null, null);
+            int column_index = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA);
+            cursor.moveToFirst();
+            return cursor.getString(column_index);
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+        }
+    }
+
+
+
     private void _share(final int scene, final ReadableMap data, final Callback callback) {
         Uri uri = null;
+        String imageUrl = null;
         if (data.hasKey("thumbImage")) {
-            String imageUrl = data.getString("thumbImage");
-
+            imageUrl = data.getString("thumbImage");
             try {
                 uri = Uri.parse(imageUrl);
                 // Verify scheme is set, so that relative uri (used by static resources) are not handled.
@@ -225,15 +247,26 @@ public class WeChatModule extends ReactContextBaseJavaModule implements IWXAPIEv
                 // ignore malformed uri, then attempt to extract resource ID.
             }
         }
-
-        if (uri != null) {
-            this._getImage(uri, new ResizeOptions(100, 100), new ImageCallback() {
-                @Override
-                public void invoke(@Nullable Bitmap bitmap) {
-                    WeChatModule.this._share(scene, data, bitmap, callback);
+        if (uri != null){
+            Log.i("thumbImage","-----------指定了缩略图-----------");
+            if(imageUrl.toLowerCase().startsWith("http")){
+                this._getImage(uri, new ResizeOptions(100, 100), new ImageCallback() {
+                    @Override
+                    public void invoke(@Nullable Bitmap bitmap) {
+                        WeChatModule.this._share(scene, data, bitmap, callback);
+                    }
+                });
+            }else{
+                if(!imageUrl.toLowerCase().startsWith("file://")){
+                    imageUrl = getRealPathFromUri(getReactApplicationContext(),uri);
                 }
-            });
-        } else {
+                Bitmap bmp = BitmapFactory.decodeFile(imageUrl);
+                Bitmap thumbBmp = Bitmap.createScaledBitmap(bmp, 100, 100, true);
+                bmp.recycle();
+                this._share(scene, data, thumbBmp, callback);
+            }
+        }else{
+            Log.i("thumbImage","-----------没有指定缩略图-----------");
             this._share(scene, data, null, callback);
         }
     }
@@ -243,11 +276,14 @@ public class WeChatModule extends ReactContextBaseJavaModule implements IWXAPIEv
             @Override
             protected void onNewResultImpl(Bitmap bitmap) {
                 bitmap = bitmap.copy(bitmap.getConfig(), true);
+                double size= (bitmap.getRowBytes() * bitmap.getHeight());
+                Log.i("_getImage","-----success--------"+size + " byte");
                 imageCallback.invoke(bitmap);
             }
 
             @Override
             protected void onFailureImpl(DataSource<CloseableReference<CloseableImage>> dataSource) {
+                Log.i("_getImage","-----fail--------");
                 imageCallback.invoke(null);
             }
         };
@@ -340,7 +376,8 @@ public class WeChatModule extends ReactContextBaseJavaModule implements IWXAPIEv
         message.mediaObject = mediaObject;
 
         if (thumbImage != null) {
-            message.setThumbImage(thumbImage);
+            message.thumbData = Util.bmpToByteArray(thumbImage, true);
+            //message.setThumbImage(thumbImage);
         }
 
         if (data.hasKey("title")) {
@@ -392,10 +429,14 @@ public class WeChatModule extends ReactContextBaseJavaModule implements IWXAPIEv
     private void __jsonToImageMedia(String imageUrl, final MediaObjectCallback callback) {
         Uri imageUri;
         try {
+            Log.i("imageUrl",imageUrl);
             imageUri = Uri.parse(imageUrl);
+            Log.i("imageUri",imageUri.toString());
             // Verify scheme is set, so that relative uri (used by static resources) are not handled.
             if (imageUri.getScheme() == null) {
                 imageUri = getResourceDrawableUri(getReactApplicationContext(), imageUrl);
+                Log.i("imageUri.getScheme","-------------");
+                Log.i("imageUri",imageUri.toString());
             }
         } catch (Exception e) {
             imageUri = null;
@@ -405,7 +446,6 @@ public class WeChatModule extends ReactContextBaseJavaModule implements IWXAPIEv
             callback.invoke(null);
             return;
         }
-
         this._getImage(imageUri, null, new ImageCallback() {
             @Override
             public void invoke(@Nullable Bitmap bitmap) {
@@ -420,7 +460,23 @@ public class WeChatModule extends ReactContextBaseJavaModule implements IWXAPIEv
             return;
         }
         String imageUrl = data.getString("imageUrl");
-        __jsonToImageMedia(imageUrl, callback);
+        if(imageUrl != null && !imageUrl.toLowerCase().startsWith("file://")){
+            try {
+                Uri uri = Uri.parse(imageUrl);
+                // Verify scheme is set, so that relative uri (used by static resources) are not handled.
+                if (uri.getScheme() == null) {
+                    uri = getResourceDrawableUri(getReactApplicationContext(), imageUrl);
+                }
+                imageUrl = getRealPathFromUri(getReactApplicationContext(),uri);
+                Log.i("imageUrl全图","-----------"+imageUrl+"-----------");
+            } catch (Exception e) {
+                // ignore malformed uri, then attempt to extract resource ID.
+            }
+        }
+        WXImageObject imgObj= new WXImageObject();
+        imgObj.setImagePath(imageUrl);
+        callback.invoke(imgObj);
+        //__jsonToImageMedia(imageUrl, callback);
     }
 
     private void __jsonToImageFileMedia(ReadableMap data, MediaObjectCallback callback) {
@@ -433,7 +489,10 @@ public class WeChatModule extends ReactContextBaseJavaModule implements IWXAPIEv
         if (!imageUrl.toLowerCase().startsWith("file://")) {
             imageUrl = "file://" + imageUrl;
         }
-        __jsonToImageMedia(imageUrl, callback);
+        WXImageObject imgObj= new WXImageObject();
+        imgObj.setImagePath(imageUrl);
+        callback.invoke(imgObj);
+        //__jsonToImageMedia(imageUrl, callback);
     }
 
     private WXMusicObject __jsonToMusicMedia(ReadableMap data) {
@@ -477,7 +536,7 @@ public class WeChatModule extends ReactContextBaseJavaModule implements IWXAPIEv
         map.putString("errStr", baseResp.errStr);
         map.putString("openId", baseResp.openId);
         map.putString("transaction", baseResp.transaction);
-
+        Log.i("baseResp",baseResp.toString());
         if (baseResp instanceof SendAuth.Resp) {
             SendAuth.Resp resp = (SendAuth.Resp) (baseResp);
 
